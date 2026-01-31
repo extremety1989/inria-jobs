@@ -6,5 +6,7 @@ dist/
 wheels/
 *.egg-info
 
+inria_jobs.sqlite
+
 # Virtual environments
 .venv
