@@ -32,7 +32,6 @@ def utc_now_iso() -> str:
     return ts.isoformat().replace("+00:00", "Z")
 
 
-
 def norm_url(u: str) -> str:
     p = urlparse(u)
     p = p._replace(fragment="")
@@ -320,6 +319,17 @@ def link_run_offer(conn: sqlite3.Connection, run_id: int, reference: str, seen_a
     )
 
 
+def _norm_title(s: Optional[str]) -> str:
+    return re.sub(r"\s+", " ", (s or "").strip()).casefold()
+
+
+def _is_excluded_title(title: Optional[str], excluded_tokens_casefold: List[str]) -> bool:
+    t = _norm_title(title)
+    if not t:
+        return False
+    return any(tok in t for tok in excluded_tokens_casefold)
+
+
 def crawl(
     start_url: str,
     db_path: str,
@@ -330,9 +340,11 @@ def crawl(
     retries: int,
     backoff_base_s: float,
     user_agent: str,
+    excluded_title_tokens: List[str],
 ) -> None:
     start_url = norm_url(start_url)
     list_prefix = (urlparse(start_url).path or "").rstrip("/")
+    excluded_tokens_casefold = [re.sub(r"\s+", " ", t.strip()).casefold() for t in excluded_title_tokens if t.strip()]
 
     s = mk_session(user_agent=user_agent, timeout_s=timeout_s)
     conn = sqlite3.connect(db_path)
@@ -347,6 +359,7 @@ def crawl(
         pages_done = 0
         new_count = 0
         total_seen = 0
+        excluded_count = 0
 
         while q and pages_done < max_pages:
             page_url = norm_url(q.pop(0))
@@ -362,6 +375,11 @@ def crawl(
                 if item.reference in seen_refs_in_run:
                     continue
                 seen_refs_in_run.add(item.reference)
+
+                if _is_excluded_title(item.title, excluded_tokens_casefold):
+                    excluded_count += 1
+                    continue
+
                 total_seen += 1
 
                 now_ts = utc_now_iso()
@@ -396,7 +414,7 @@ def crawl(
 
         run_finished = finish_run(conn, run_id)
         print(
-            f"Run {run_id} done. started={run_started} finished={run_finished} pages={pages_done} seen={total_seen} new={new_count} db={db_path}",
+            f"Run {run_id} done. started={run_started} finished={run_finished} pages={pages_done} kept_seen={total_seen} excluded={excluded_count} new={new_count} db={db_path}",
             flush=True,
         )
     finally:
@@ -414,7 +432,21 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--retries", type=int, default=3)
     p.add_argument("--backoff", type=float, default=0.8)
     p.add_argument("--user-agent", default="Mozilla/5.0 (compatible; inria-jobs-scraper/1.0)")
+    p.add_argument(
+        "--exclude-title",
+        action="append",
+        default=[],
+        help="Exclude offers whose title contains this substring (case-insensitive). Can be used multiple times.",
+    )
     args = p.parse_args(argv)
+
+    default_excludes = [
+        "Stagiaire Master",
+        "Master Internship",
+        "Post Doctorant",
+        "Post-Doctoral",
+    ]
+    excludes = list(default_excludes) + list(args.exclude_title or [])
 
     crawl(
         start_url=args.start_url,
@@ -426,6 +458,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         retries=max(0, args.retries),
         backoff_base_s=max(0.1, args.backoff),
         user_agent=args.user_agent,
+        excluded_title_tokens=excludes,
     )
     return 0
 
