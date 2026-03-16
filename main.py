@@ -446,7 +446,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         "Post Doctorant",
         "Post-Doctoral",
         "Thèse ou équivalent",
-        "Post-Doctorant"
+        "Post-Doctorant",
+        "Gestionnaire paie"
     ]
     excludes = list(default_excludes) + list(args.exclude_title or [])
 
